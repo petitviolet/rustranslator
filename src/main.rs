@@ -3,7 +3,7 @@ use std::{collections::HashMap, env, error::Error, future::Future, pin::Pin};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    println!("args: {:#?}", args);
+    // println!("args: {:#?}", args);
     let google = Google::new();
     let result = match args.len() {
         3 => {
@@ -96,6 +96,22 @@ impl GoogleRequestBody {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, serde::Deserialize)]
+struct GoogleResponseBody {
+    translations: Vec<GoogleResponseTranslation>,
+}
+impl GoogleResponseBody {
+    pub fn text(&self) -> String {
+        self.translations.get(0).unwrap().translated_text.to_owned()
+    }
+}
+
+#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Eq, PartialEq, serde::Deserialize)]
+struct GoogleResponseTranslation {
+    translated_text: String,
+}
+
 impl Google {
     pub fn new() -> Self {
         let project_id = std::env::var("GOOGLE_PROJECT_ID").expect("must set GOOGLE_PROJECT_ID");
@@ -118,17 +134,17 @@ impl Google {
         let body = GoogleRequestBody::new(text, from, to);
 
         let client = reqwest::Client::new();
-        let res = client
+        let res: Result<GoogleResponseBody, reqwest::Error> = client
             .post(self.translate_text_url())
             .header("Authorization", format!("Bearer {}", self.access_token))
             .json(&body)
             .send()
             .await
             .unwrap()
-            .text()
-            .await
-            .map_err(|err| TranslateError::new(format!("error! {:#?}", err)));
+            .json()
+            .await;
 
-        res
+        res.map(|res| res.text())
+            .map_err(|err| TranslateError::new(format!("error! {:#?}", err)))
     }
 }
