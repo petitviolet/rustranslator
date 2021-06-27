@@ -15,3 +15,7 @@ Hello
 
 See the document at first.
 https://cloud.google.com/translate/docs/advanced/translating-text-v3?hl=en#translating_input_strings
+
+## LICENSE
+
+[MIT](https://petitviolet.mit-license.org)
