@@ -4,6 +4,7 @@ use std::{collections::HashMap, env, error::Error, future::Future, pin::Pin};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     println!("args: {:#?}", args);
+    let google = Google::new();
     let result = match args.len() {
         3 => {
             let (text, to) = (&args[1], &args[2]);
@@ -12,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Lang::EN => Lang::JP,
                 Lang::JP => Lang::EN,
             };
-            Google {}.translate(text.as_str(), &from, &to).await
+            google.translate(text.as_str(), &from, &to).await
         }
         4 => {
             let (text, to, from) = (
@@ -20,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Lang::from((&args[2]).to_owned()),
                 Lang::from((&args[3]).to_owned()),
             );
-            Google {}.translate(text.as_str(), &from, &to).await
+            google.translate(text.as_str(), &from, &to).await
         }
         other => {
             panic!(format!("argument is invalid. args = {:#?}", args))
@@ -68,20 +69,58 @@ impl From<String> for Lang {
     }
 }
 
-struct Google;
+struct Google {
+    project_id: String,
+    access_token: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize)]
+struct GoogleRequestBody {
+    contents: Vec<String>,
+    source_language_code: String,
+    target_language_code: String,
+}
+impl GoogleRequestBody {
+    pub fn new(text: &str, from: &Lang, to: &Lang) -> Self {
+        Self {
+            contents: vec![text.to_string()],
+            source_language_code: Self::language_text(from),
+            target_language_code: Self::language_text(to),
+        }
+    }
+    fn language_text(lang: &Lang) -> String {
+        match lang {
+            Lang::JP => "ja".to_string(),
+            Lang::EN => "en".to_string(),
+        }
+    }
+}
+
 impl Google {
-    const GOOGLE_BASE_URL: &'static str =
-        "https://translation.googleapis.com/language/translate/v2";
+    pub fn new() -> Self {
+        let project_id = std::env::var("GOOGLE_PROJECT_ID").expect("must set GOOGLE_PROJECT_ID");
+        let access_token = std::env::var("GOOGLE_ACCESS_TOKEN")
+            .expect("must set GOOGLE_ACCESS_TOKEN using `gcloud auth application-default print-access-token`");
+        Self {
+            project_id,
+            access_token,
+        }
+    }
+
+    fn translate_text_url(&self) -> String {
+        format!(
+            "https://translate.googleapis.com/v3beta1/projects/{}:translateText",
+            self.project_id
+        )
+    }
 
     pub async fn translate(&self, text: &str, from: &Lang, to: &Lang) -> TranslateResult {
-        let mut body = HashMap::new();
-        body.insert("q", text);
-        body.insert("source", self.language_text(from));
-        body.insert("target", self.language_text(to));
+        let body = GoogleRequestBody::new(text, from, to);
 
         let client = reqwest::Client::new();
         let res = client
-            .post(Self::GOOGLE_BASE_URL)
+            .post(self.translate_text_url())
+            .header("Authorization", format!("Bearer {}", self.access_token))
             .json(&body)
             .send()
             .await
@@ -91,12 +130,5 @@ impl Google {
             .map_err(|err| TranslateError::new(format!("error! {:#?}", err)));
 
         res
-    }
-
-    fn language_text(&self, lang: &Lang) -> &str {
-        match lang {
-            Lang::JP => "ja",
-            Lang::EN => "en",
-        }
     }
 }
