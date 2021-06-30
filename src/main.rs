@@ -41,9 +41,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 type TranslateResult = Result<String, TranslateError>;
-// trait Translator {
-//   fn translate(text: &str, from: &Lang, to: &Lang) -> Pin<Box<TranslateResult + Send>>;
-// }
+trait Translator {
+    fn translate(
+        &self,
+        text: &str,
+        from: &Lang,
+        to: &Lang,
+    ) -> Pin<Box<dyn Future<Output = TranslateResult> + Send>>;
+}
 
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
 struct TranslateError {
@@ -129,22 +134,32 @@ impl Google {
             self.project_id
         )
     }
+}
 
-    pub async fn translate(&self, text: &str, from: &Lang, to: &Lang) -> TranslateResult {
+impl Translator for Google {
+    // async fn translate(&self, text: &str, from: &Lang, to: &Lang) -> TranslateResult {
+    fn translate(
+        &self,
+        text: &str,
+        from: &Lang,
+        to: &Lang,
+    ) -> Pin<Box<dyn Future<Output = TranslateResult> + Send>> {
         let body = GoogleRequestBody::new(text, from, to);
 
         let client = reqwest::Client::new();
-        let res: Result<GoogleResponseBody, reqwest::Error> = client
+        let req = client
             .post(self.translate_text_url())
-            .header("Authorization", format!("Bearer {}", self.access_token))
+            .header("Authorization", format!("Bearer {}", &self.access_token))
             .json(&body)
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await;
-
-        res.map(|res| res.text())
-            .map_err(|err| TranslateError::new(format!("error! {:#?}", err)))
+            .send();
+        let res = async move {
+            req.await
+                .unwrap()
+                .json()
+                .await
+                .map(|res: GoogleResponseBody| res.text())
+                .map_err(|err| TranslateError::new(format!("error! {:#?}", err)))
+        };
+        Box::pin(res)
     }
 }
